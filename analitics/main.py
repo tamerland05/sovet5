@@ -1,37 +1,78 @@
-import pandas as pd
-import numpy as np
-import sqlite3
+import asyncio
 from datetime import datetime, timedelta
+import aiosqlite
+import numpy as np
+import pandas as pd
 
 
 class Analytics:
     def __init__(self, db_path, left_side=None, right_side=None, marketplace=None):
-        self.conn = sqlite3.connect(db_path)
-        self.orders = self.load_data()
-        self.filtered_orders = pd.DataFrame(columns=self.orders.columns)
+        self.db_path = db_path
+        self.orders = None
+        self.filtered_orders = pd.DataFrame(columns=['order_id', 'item_id', 'item_count', 'price', 'payment',
+                                                     'tariff_name', 'tariff_rate', 'order_date', 'marketplace',
+                                                     'is_delivered'])
         self.is_period = left_side is not None and right_side is not None
         self.left_side = pd.to_datetime(left_side).date() if left_side else None
         self.right_side = pd.to_datetime(right_side).date() if right_side else None
         self.marketplace = marketplace
 
-    def load_data(self):
-        query = """
-        SELECT 
-            items.order_id, 
-            items.item_id, 
-            items.item_count, 
-            items.cart AS price, 
-            items.payment, 
-            items.tariff_name, 
-            items.tariff_rate, 
-            orders.date AS order_date, 
-            marketplaces.marketplace_name AS marketplace, 
-            orders.is_delivered
-        FROM items
-        JOIN orders ON items.order_id = orders.order_id
-        JOIN marketplaces ON orders.marketplace_id = marketplaces.marketplace_id
-        """
-        return pd.read_sql(query, self.conn, parse_dates=['order_date'])
+    async def load_data(self):
+        async with aiosqlite.connect(self.db_path) as conn:
+            query = """
+            SELECT 
+                items.order_id, 
+                items.item_id, 
+                items.item_count, 
+                items.cart AS price, 
+                items.payment, 
+                items.tariff_name, 
+                items.tariff_rate, 
+                orders.date AS order_date, 
+                marketplaces.marketplace_name AS marketplace, 
+                orders.is_delivered
+            FROM items
+            JOIN orders ON items.order_id = orders.order_id
+            JOIN marketplaces ON orders.marketplace_id = marketplaces.marketplace_id
+            """
+            async with conn.execute(query) as cursor:
+                rows = await cursor.fetchall()
+
+            columns = [col[0] for col in cursor.description]
+            self.orders = pd.DataFrame(rows, columns=columns)
+            self.orders['order_date'] = pd.to_datetime(self.orders['order_date'])
+
+    async def setup(self):
+        await self.load_data()
+
+    # class Analytics:
+    #     def __init__(self, db_path, left_side=None, right_side=None, marketplace=None):
+    #         self.conn = sqlite3.connect(db_path)
+    #         self.orders = self.load_data()
+    #         self.filtered_orders = pd.DataFrame(columns=self.orders.columns)
+    #         self.is_period = left_side is not None and right_side is not None
+    #         self.left_side = pd.to_datetime(left_side).date() if left_side else None
+    #         self.right_side = pd.to_datetime(right_side).date() if right_side else None
+    #         self.marketplace = marketplace
+    #
+    #     def load_data(self):
+    #         query = """
+    #         SELECT
+    #             items.order_id,
+    #             items.item_id,
+    #             items.item_count,
+    #             items.cart AS price,
+    #             items.payment,
+    #             items.tariff_name,
+    #             items.tariff_rate,
+    #             orders.date AS order_date,
+    #             marketplaces.marketplace_name AS marketplace,
+    #             orders.is_delivered
+    #         FROM items
+    #         JOIN orders ON items.order_id = orders.order_id
+    #         JOIN marketplaces ON orders.marketplace_id = marketplaces.marketplace_id
+    #         """
+    #         return pd.read_sql(query, self.conn, parse_dates=['order_date'])
 
     def filter_orders(self, analytics_time_type):
         current_date = datetime.now().date()
@@ -47,17 +88,20 @@ class Analytics:
             week_start = current_date - pd.to_timedelta(current_date.weekday(), unit='D')
             week_end = current_date
             self.filtered_orders = self.filtered_orders[
-                (self.filtered_orders['order_date'].dt.date >= week_start) & (self.filtered_orders['order_date'].dt.date <= week_end)]
+                (self.filtered_orders['order_date'].dt.date >= week_start) & (
+                            self.filtered_orders['order_date'].dt.date <= week_end)]
         elif analytics_time_type == 'месяц':
             month_start = current_date.replace(day=1)
             month_end = current_date
             self.filtered_orders = self.filtered_orders[
-                (self.filtered_orders['order_date'].dt.date >= month_start) & (self.filtered_orders['order_date'].dt.date <= month_end)]
+                (self.filtered_orders['order_date'].dt.date >= month_start) & (
+                            self.filtered_orders['order_date'].dt.date <= month_end)]
         elif analytics_time_type == 'год':
             year_start = current_date.replace(month=1, day=1)
             year_end = current_date
             self.filtered_orders = self.filtered_orders[
-                (self.filtered_orders['order_date'].dt.date >= year_start) & (self.filtered_orders['order_date'].dt.date <= year_end)]
+                (self.filtered_orders['order_date'].dt.date >= year_start) & (
+                            self.filtered_orders['order_date'].dt.date <= year_end)]
         elif analytics_time_type == 'период' and self.is_period:
             self.filtered_orders = self.filtered_orders[
                 (self.filtered_orders['order_date'].dt.date >= self.left_side) & (
@@ -117,7 +161,7 @@ class Analytics:
         elif analytics_time_type == 'год':
             periods = pd.date_range(start=start_date.replace(month=1, day=1), end=end_date, freq='YS')
         elif analytics_time_type == 'период' and self.is_period:
-            periods = pd.date_range(start=start_date, end=end_date, freq=self.right_side-self.left_side)
+            periods = pd.date_range(start=start_date, end=end_date, freq=self.right_side - self.left_side)
         else:
             return None
 
@@ -232,7 +276,7 @@ class Analytics:
         return abs(change), change > 0
 
 
-def main():
+async def main():
     # Путь к базе данных
     db_path = 'sovet5.db'
 
@@ -250,6 +294,9 @@ def main():
     marketplace = marketplace if marketplace else None
 
     analytics = Analytics(db_path, left_side, right_side, marketplace)
+
+    await analytics.setup()
+
     analytics.filter_orders(analytics_time_type)
 
     total_sales_sum, total_sales_count = analytics.total_sales()
@@ -349,5 +396,5 @@ def main():
     print(sales_by_category)
 
 
-if __name__ == '__main__':
-    main()
+if __name__ == "__main__":
+    asyncio.run(main())
