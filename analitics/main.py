@@ -17,8 +17,6 @@ class Analytics:
         self.right_side = pd.to_datetime(right_side).date() if right_side else None
         self.marketplace = marketplace
 
-        asyncio.run(self.load_data())
-
     async def load_data(self):
         async with aiosqlite.connect(self.db_path) as conn:
             query = """
@@ -43,6 +41,9 @@ class Analytics:
             columns = [col[0] for col in cursor.description]
             self.orders = pd.DataFrame(rows, columns=columns)
             self.orders['order_date'] = pd.to_datetime(self.orders['order_date'])
+
+    async def setup(self):
+        await self.load_data()
 
     # class Analytics:
     #     def __init__(self, db_path, left_side=None, right_side=None, marketplace=None):
@@ -293,6 +294,9 @@ async def main():
     marketplace = marketplace if marketplace else None
 
     analytics = Analytics(db_path, left_side, right_side, marketplace)
+
+    await analytics.setup()
+
     analytics.filter_orders(analytics_time_type)
 
     total_sales_sum, total_sales_count = analytics.total_sales()
