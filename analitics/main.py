@@ -232,9 +232,85 @@ class Analytics:
         return abs(change), change > 0
 
 
+def count_analytics(marketplace, analytics_time_type, left_side, right_side):
+    db_path = '../sovet5.db'
+    result = {'error': False}
+
+    analytics = Analytics(db_path, left_side, right_side, marketplace)
+    analytics.filter_orders(analytics_time_type)
+
+    total_sales_sum, total_sales_count = analytics.total_sales()
+    result['sum'] = {'value': total_sales_sum}
+    result['count'] = {'value': total_sales_count}
+
+    avg_sales_sum = analytics.average_sales(analytics_time_type)
+    result['sum']['avg'] = avg_sales_sum
+
+    change, is_increase = analytics.percentage_change(avg_sales_sum, total_sales_sum)
+    if change is not None:
+        sign = "увеличение" if is_increase else "уменьшение"
+        sign = "отсутсвует изменение" if avg_sales_sum == total_sales_sum else sign
+        result['sum']['sign'] = sign
+    else:
+        result['sum']['sign'] = None
+
+    avg_items_sold_sum = analytics.average_items_sold(analytics_time_type)
+    result['count']['avg'] = avg_items_sold_sum
+
+    change, is_increase = analytics.percentage_change(avg_items_sold_sum, total_sales_count)
+    if change is not None:
+        sign = "увеличение" if is_increase else "уменьшение"
+        sign = "отсутсвует изменение" if avg_sales_sum == total_sales_sum else sign
+        result['count']['sign'] = sign
+    else:
+        result['count']['sign'] = None
+
+    total_sales_without_returns_sum, total_sales_without_returns_count = analytics.total_sales_without_returns()
+    result['without_returns_sum'] = {'value': total_sales_without_returns_sum}
+    result['without_returns_count'] = {'value': total_sales_without_returns_sum}
+
+    avg_sales_without_returns_sum = analytics.average_sales_without_returns(analytics_time_type)
+    result['without_returns_sum']['avg'] = total_sales_without_returns_sum
+
+    change, is_increase = analytics.percentage_change(avg_sales_without_returns_sum, total_sales_without_returns_sum)
+    if change is not None:
+        sign = "увеличение" if is_increase else "уменьшение"
+        sign = "отсутсвует изменение" if avg_sales_sum == total_sales_sum else sign
+        result['without_returns_sum']['sign'] = sign
+    else:
+        result['without_returns_sum']['sign'] = None
+
+    avg_items_without_returns_sold_sum = analytics.average_items_sold_without_returns(analytics_time_type)
+    result['without_returns_count']['avg'] = total_sales_without_returns_sum
+
+    change, is_increase = analytics.percentage_change(avg_items_without_returns_sold_sum,
+                                                      total_sales_without_returns_count)
+    if change is not None:
+        sign = "увеличение" if is_increase else "уменьшение"
+        sign = "отсутсвует изменение" if avg_sales_sum == total_sales_sum else sign
+        result['without_returns_count']['sign'] = sign
+    else:
+        result['without_returns_count']['sign'] = None
+
+    sales_by_marketplace = analytics.sales_by_marketplace()
+    result['sales_by_marketplace'] = sales_by_marketplace
+
+    sales_by_date = analytics.sales_by_date()
+    result['sales_by_date'] = sales_by_date
+
+    sales_by_tariff = analytics.sales_by_tariff()
+    result['sales_by_tariff'] = sales_by_tariff
+
+    sales_by_category = analytics.sales_by_category()
+    result['sales_by_category'] = sales_by_category
+
+    # print(result)
+    return str(result)
+
+
 def main():
     # Путь к базе данных
-    db_path = 'sovet5.db'
+    db_path = '../sovet5.db'
 
     analytics_time_type = input("Аналитика по (день / неделя / месяц / год / период): ")
     left_side, right_side = None, None
@@ -350,4 +426,6 @@ def main():
 
 
 if __name__ == '__main__':
-    main()
+    # main()
+    result = count_analytics(None, "год", None, None)
+    print(result)
