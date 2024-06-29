@@ -1,7 +1,7 @@
 import aiosqlite
 
 
-db_name = 'sovet5.db'
+db_name = '../sovet5.db'
 
 
 async def get_seller_id(seller_name):
@@ -11,3 +11,10 @@ async def get_seller_id(seller_name):
         async with connection.cursor() as cursor:
             return await (await cursor.execute(query, seller_name)).fetchone()[0]
 
+
+async def get_storage_from_db():
+    query = 'SELECT * FROM storage'
+
+    async with aiosqlite.connect(db_name) as connection:
+        async with connection.cursor() as cursor:
+            return await (await cursor.execute(query)).fetchall()
