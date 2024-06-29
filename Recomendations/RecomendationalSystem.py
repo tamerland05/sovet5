@@ -73,16 +73,16 @@ if __name__ == "__main__":
     data = analyzer.preprocess_data(data)
 
     # Подготовка данных для обучения модели
-    X = data.drop(['item_id', 'date', 'payment', 'sale_success'], axis=1)  # Признаки для обучения
-    y = data['sale_success']  # Целевая переменная!!
+    X = data.drop(["item_id", "date", "payment", "sale_success"], axis=1)  # Признаки для обучения
+    y = data["sale_success"]  # Целевая переменная!!
 
     # Разделение данных на обучающую и тестовую выборки
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
 
-    # Обучение модели и оценка ее точности
+    # Обучение модели и оценка её точности
     analyzer.train_model(X_train, y_train)
     accuracy = analyzer.evaluate_model(X_test, y_test)
-    print(f'Точность модели: {accuracy}')  # Вывод точности модели
+    print(f'Точность модели: {accuracy}')
 
     recommendations = analyzer.make_recommendations(X_test)
     for recommendation in recommendations:
