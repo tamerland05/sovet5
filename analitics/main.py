@@ -1,12 +1,13 @@
-import pandas as pd
-import numpy as np
 import sqlite3
 from datetime import datetime, timedelta
+import numpy as np
+import pandas as pd
 
 
 class Analytics:
     def __init__(self, db_path, left_side=None, right_side=None, marketplace=None):
         self.conn = sqlite3.connect(db_path)
+        self.db_path = db_path
         self.orders = self.load_data()
         self.filtered_orders = pd.DataFrame(columns=self.orders.columns)
         self.is_period = left_side is not None and right_side is not None
@@ -16,22 +17,49 @@ class Analytics:
 
     def load_data(self):
         query = """
-        SELECT 
-            items.order_id, 
-            items.item_id, 
-            items.item_count, 
-            items.cart AS price, 
-            items.payment, 
-            items.tariff_name, 
-            items.tariff_rate, 
-            orders.date AS order_date, 
-            marketplaces.marketplace_name AS marketplace, 
+        SELECT
+            items.order_id,
+            items.item_id,
+            items.item_count,
+            items.cart AS price,
+            items.payment,
+            items.tariff_name,
+            items.tariff_rate,
+            items.item_rate,
+            orders.date AS order_date,
+            marketplaces.marketplace_name AS marketplace,
             orders.is_delivered
         FROM items
         JOIN orders ON items.order_id = orders.order_id
         JOIN marketplaces ON orders.marketplace_id = marketplaces.marketplace_id
         """
         return pd.read_sql(query, self.conn, parse_dates=['order_date'])
+
+    def calculate_average_item_rate(self, item_id, marketplace_name):
+        marketplace_orders = self.orders
+        marketplace_orders = marketplace_orders[marketplace_orders['marketplace'] == marketplace_name[0]]
+        item_rates = marketplace_orders[marketplace_orders['item_id'] == item_id]['item_rate']
+        if len(item_rates) > 0:
+            return item_rates.mean()
+        return 0
+
+    def update_storage_item_rate(self):
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.execute("SELECT DISTINCT item_id, marketplace FROM storage")
+            rows = cursor.fetchall()
+
+            updates = []
+            for row in rows:
+                item_id = row[0]
+                marketplace_id = row[1]
+                cursor_marketplace = conn.execute(
+                            "SELECT marketplace_name FROM marketplaces WHERE marketplace_id = ?", (marketplace_id,))
+                marketplace_name = cursor_marketplace.fetchone()
+                average_rate = self.calculate_average_item_rate(item_id, marketplace_name)
+                updates.append((average_rate, item_id, marketplace_id))
+
+            with conn:
+                conn.executemany("UPDATE storage SET item_rate = ? WHERE item_id = ? AND marketplace = ?", updates)
 
     def filter_orders(self, analytics_time_type):
         current_date = datetime.now().date()
@@ -47,17 +75,20 @@ class Analytics:
             week_start = current_date - pd.to_timedelta(current_date.weekday(), unit='D')
             week_end = current_date
             self.filtered_orders = self.filtered_orders[
-                (self.filtered_orders['order_date'].dt.date >= week_start) & (self.filtered_orders['order_date'].dt.date <= week_end)]
+                (self.filtered_orders['order_date'].dt.date >= week_start) & (
+                            self.filtered_orders['order_date'].dt.date <= week_end)]
         elif analytics_time_type == 'месяц':
             month_start = current_date.replace(day=1)
             month_end = current_date
             self.filtered_orders = self.filtered_orders[
-                (self.filtered_orders['order_date'].dt.date >= month_start) & (self.filtered_orders['order_date'].dt.date <= month_end)]
+                (self.filtered_orders['order_date'].dt.date >= month_start) & (
+                            self.filtered_orders['order_date'].dt.date <= month_end)]
         elif analytics_time_type == 'год':
             year_start = current_date.replace(month=1, day=1)
             year_end = current_date
             self.filtered_orders = self.filtered_orders[
-                (self.filtered_orders['order_date'].dt.date >= year_start) & (self.filtered_orders['order_date'].dt.date <= year_end)]
+                (self.filtered_orders['order_date'].dt.date >= year_start) & (
+                            self.filtered_orders['order_date'].dt.date <= year_end)]
         elif analytics_time_type == 'период' and self.is_period:
             self.filtered_orders = self.filtered_orders[
                 (self.filtered_orders['order_date'].dt.date >= self.left_side) & (
@@ -117,7 +148,7 @@ class Analytics:
         elif analytics_time_type == 'год':
             periods = pd.date_range(start=start_date.replace(month=1, day=1), end=end_date, freq='YS')
         elif analytics_time_type == 'период' and self.is_period:
-            periods = pd.date_range(start=start_date, end=end_date, freq=self.right_side-self.left_side)
+            periods = pd.date_range(start=start_date, end=end_date, freq=self.right_side - self.left_side)
         else:
             return None
 
@@ -225,14 +256,15 @@ class Analytics:
 
         return avg_items_count
 
-    def percentage_change(self, previous_sum, current_sum):
+    @staticmethod
+    def percentage_change(previous_sum, current_sum):
         if previous_sum == 0:
             return None, False
         change = (current_sum - previous_sum) / previous_sum * 100
         return abs(change), change > 0
 
 
-def count_analytics(marketplace, analytics_time_type, left_side, right_side):
+def count_dashboard(marketplace, analytics_time_type, left_side, right_side):
     db_path = '../sovet5.db'
     result = {'error': False}
 
@@ -240,77 +272,87 @@ def count_analytics(marketplace, analytics_time_type, left_side, right_side):
     analytics.filter_orders(analytics_time_type)
 
     total_sales_sum, total_sales_count = analytics.total_sales()
-    result['sum'] = {'value': total_sales_sum}
-    result['count'] = {'value': total_sales_count}
+    result['sum'] = {'value': round(float(total_sales_sum), 2)}
+    result['count'] = {'value': round(float(total_sales_count), 2)}
 
     avg_sales_sum = analytics.average_sales(analytics_time_type)
-    result['sum']['avg'] = avg_sales_sum
+    result['sum']['avg'] = round(float(avg_sales_sum), 2)
 
     change, is_increase = analytics.percentage_change(avg_sales_sum, total_sales_sum)
+    change = round(float(change), 2)
     if change is not None:
-        sign = "увеличение" if is_increase else "уменьшение"
-        sign = "отсутсвует изменение" if avg_sales_sum == total_sales_sum else sign
-        result['sum']['sign'] = sign
+        change = change if is_increase else -change
+        change = 0 if avg_sales_sum == total_sales_sum else change
+        result['sum']['change'] = change
     else:
-        result['sum']['sign'] = None
+        result['sum']['change'] = 0
 
     avg_items_sold_sum = analytics.average_items_sold(analytics_time_type)
-    result['count']['avg'] = avg_items_sold_sum
+    result['count']['avg'] = round(float(avg_items_sold_sum), 2)
 
     change, is_increase = analytics.percentage_change(avg_items_sold_sum, total_sales_count)
+    change = round(float(change), 2)
     if change is not None:
-        sign = "увеличение" if is_increase else "уменьшение"
-        sign = "отсутсвует изменение" if avg_sales_sum == total_sales_sum else sign
-        result['count']['sign'] = sign
+        change = change if is_increase else -change
+        change = 0 if avg_sales_sum == total_sales_sum else change
+        result['count']['change'] = change
     else:
-        result['count']['sign'] = None
+        result['count']['change'] = 0
 
     total_sales_without_returns_sum, total_sales_without_returns_count = analytics.total_sales_without_returns()
-    result['without_returns_sum'] = {'value': total_sales_without_returns_sum}
-    result['without_returns_count'] = {'value': total_sales_without_returns_sum}
+    result['without_returns_sum'] = {'value': round(float(total_sales_without_returns_sum), 2)}
+    result['without_returns_count'] = {'value': round(float(total_sales_without_returns_sum), 2)}
 
     avg_sales_without_returns_sum = analytics.average_sales_without_returns(analytics_time_type)
-    result['without_returns_sum']['avg'] = total_sales_without_returns_sum
+    result['without_returns_sum']['avg'] = round(float(total_sales_without_returns_sum), 2)
 
     change, is_increase = analytics.percentage_change(avg_sales_without_returns_sum, total_sales_without_returns_sum)
+    change = round(float(change), 2)
     if change is not None:
-        sign = "увеличение" if is_increase else "уменьшение"
-        sign = "отсутсвует изменение" if avg_sales_sum == total_sales_sum else sign
-        result['without_returns_sum']['sign'] = sign
+        change = change if is_increase else -change
+        change = 0 if avg_sales_sum == total_sales_sum else change
+        result['without_returns_sum']['change'] = change
     else:
-        result['without_returns_sum']['sign'] = None
+        result['without_returns_sum']['change'] = 0
 
     avg_items_without_returns_sold_sum = analytics.average_items_sold_without_returns(analytics_time_type)
-    result['without_returns_count']['avg'] = total_sales_without_returns_sum
+    result['without_returns_count']['avg'] = round(float(total_sales_without_returns_sum), 2)
 
     change, is_increase = analytics.percentage_change(avg_items_without_returns_sold_sum,
                                                       total_sales_without_returns_count)
+    change = round(float(change), 2)
     if change is not None:
-        sign = "увеличение" if is_increase else "уменьшение"
-        sign = "отсутсвует изменение" if avg_sales_sum == total_sales_sum else sign
-        result['without_returns_count']['sign'] = sign
+        change = change if is_increase else -change
+        change = 0 if avg_sales_sum == total_sales_sum else change
+        result['without_returns_count']['change'] = change
     else:
-        result['without_returns_count']['sign'] = None
+        result['without_returns_count']['change'] = 0
+
+    return result
+
+
+def count_charts(now):
+    db_path = '../sovet5.db'
+    result = {'error': False}
+
+    analytics = Analytics(db_path, now, None, None)
+    analytics.filter_orders('год')
 
     sales_by_marketplace = analytics.sales_by_marketplace()
-    result['sales_by_marketplace'] = sales_by_marketplace
+    result['sales_by_marketplace'] = [{'name': i.marketplace, 'value': round(i.effective_price, 2)} for i in sales_by_marketplace.itertuples()]
 
     sales_by_date = analytics.sales_by_date()
-    result['sales_by_date'] = sales_by_date
+    result['sales_by_date'] = [{'time': i.order_date, 'sells': round(i.effective_price, 2)} for i in sales_by_date.itertuples()]
 
     sales_by_tariff = analytics.sales_by_tariff()
-    result['sales_by_tariff'] = sales_by_tariff
+    result['sales_by_tariff'] = [{'name': i.tariff_name, 'value': round(i.price, 2)} for i in sales_by_tariff.itertuples()]
 
-    sales_by_category = analytics.sales_by_category()
-    result['sales_by_category'] = sales_by_category
-
-    # print(result)
-    return str(result)
+    return result
 
 
 def main():
     # Путь к базе данных
-    db_path = '../sovet5.db'
+    db_path = 'sovet5.db'
 
     analytics_time_type = input("Аналитика по (день / неделя / месяц / год / период): ")
     left_side, right_side = None, None
@@ -326,6 +368,9 @@ def main():
     marketplace = marketplace if marketplace else None
 
     analytics = Analytics(db_path, left_side, right_side, marketplace)
+
+    analytics.update_storage_item_rate()
+
     analytics.filter_orders(analytics_time_type)
 
     total_sales_sum, total_sales_count = analytics.total_sales()
@@ -425,7 +470,5 @@ def main():
     print(sales_by_category)
 
 
-if __name__ == '__main__':
-    # main()
-    result = count_analytics(None, "год", None, None)
-    print(result)
+if __name__ == "__main__":
+    print(count_dashboard('Wilberries', 'год', '2024-06-09', '2024-06-17'))
